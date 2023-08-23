@@ -14,7 +14,107 @@ resource "tls_private_key" "ssh" {
   rsa_bits  = 2048
 }
 
+
 resource "azurerm_kubernetes_cluster" "main" {
+  location                            = coalesce(var.location, data.azurerm_resource_group.main.location)
+  name                                = coalesce(var.cluster_name, trim("${var.prefix}-aks", "-"))
+  resource_group_name                 = data.azurerm_resource_group.main.name
+  automatic_channel_upgrade           = var.automatic_channel_upgrade
+  azure_policy_enabled                = var.azure_policy_enabled
+  disk_encryption_set_id              = var.disk_encryption_set_id
+  dns_prefix                          = var.prefix
+  http_application_routing_enabled    = var.http_application_routing_enabled
+  kubernetes_version                  = var.kubernetes_version
+  local_account_disabled              = var.local_account_disabled
+  node_resource_group                 = var.node_resource_group
+  oidc_issuer_enabled                 = var.oidc_issuer_enabled
+  open_service_mesh_enabled           = var.open_service_mesh_enabled
+  private_cluster_enabled             = var.private_cluster_enabled
+  private_cluster_public_fqdn_enabled = var.private_cluster_public_fqdn_enabled
+  private_dns_zone_id                 = var.private_dns_zone_id
+  public_network_access_enabled       = var.public_network_access_enabled
+  role_based_access_control_enabled   = true
+  sku_tier                            = var.sku_tier
+  tags = merge(var.tags, (/*<box>*/ (var.tracing_tags_enabled ? { for k, v in /*</box>*/ {
+    avm_git_commit           = "0ae8a663f1dc1dc474b14c10d9c94c77a3d1e234"
+    avm_git_file             = "main.tf"
+    avm_git_last_modified_at = "2023-06-05 02:21:33"
+    avm_git_org              = "Azure"
+    avm_git_repo             = "terraform-azurerm-aks"
+    avm_yor_trace            = "f57d8afc-c056-4a38-b8bc-5ac303fb5737"
+    } /*<box>*/ : replace(k, "avm_", var.tracing_tags_prefix) => v } : {}) /*</box>*/), (/*<box>*/ (var.tracing_tags_enabled ? { for k, v in /*</box>*/ {
+    avm_yor_name = "main"
+  } /*<box>*/ : replace(k, "avm_", var.tracing_tags_prefix) => v } : {}) /*</box>*/))
+  workload_identity_enabled = var.workload_identity_enabled
+
+  default_node_pool {
+    name                         = var.agents_pool_name
+    vm_size                      = var.agents_size
+    enable_auto_scaling          = var.enable_auto_scaling
+    enable_host_encryption       = var.enable_host_encryption
+    enable_node_public_ip        = var.enable_node_public_ip
+    max_count                    = null
+    max_pods                     = 50
+    min_count                    = null
+    node_count                   = var.agents_count
+    node_labels                  = var.agents_labels
+    node_taints                  = var.agents_taints
+    only_critical_addons_enabled = var.only_critical_addons_enabled
+    orchestrator_version         = var.orchestrator_version
+    os_disk_size_gb              = var.os_disk_size_gb
+    os_disk_type                 = var.os_disk_type
+    os_sku                       = var.os_sku
+    pod_subnet_id                = var.pod_subnet_id
+    proximity_placement_group_id = var.agents_proximity_placement_group_id
+    scale_down_mode              = var.scale_down_mode
+    tags                         = merge(var.tags, var.agents_tags)
+    temporary_name_for_rotation  = var.temporary_name_for_rotation
+    type                         = var.agents_type
+    ultra_ssd_enabled            = var.ultra_ssd_enabled
+    vnet_subnet_id               = var.vnet_subnet_id
+    zones                        = var.agents_availability_zones
+
+    dynamic "kubelet_config" {
+      for_each = var.agents_pool_kubelet_configs
+
+      content {
+        allowed_unsafe_sysctls    = kubelet_config.value.allowed_unsafe_sysctls
+        container_log_max_line    = kubelet_config.value.container_log_max_line
+        container_log_max_size_mb = kubelet_config.value.container_log_max_size_mb
+        cpu_cfs_quota_enabled     = kubelet_config.value.cpu_cfs_quota_enabled
+        cpu_cfs_quota_period      = kubelet_config.value.cpu_cfs_quota_period
+        cpu_manager_policy        = kubelet_config.value.cpu_manager_policy
+        image_gc_high_threshold   = kubelet_config.value.image_gc_high_threshold
+        image_gc_low_threshold    = kubelet_config.value.image_gc_low_threshold
+        pod_max_pid               = kubelet_config.value.pod_max_pid
+        topology_manager_policy   = kubelet_config.value.topology_manager_policy
+      }
+    }
+    dynamic "linux_os_config" {
+      for_each = var.agents_pool_linux_os_configs
+
+      content {
+        swap_file_size_mb             = linux_os_config.value.swap_file_size_mb
+        transparent_huge_page_defrag  = linux_os_config.value.transparent_huge_page_defrag
+      }
+    }
+  }
+
+  network_profile {
+    network_plugin = "azure"
+    dns_service_ip = var.dns_service_ip
+    service_cidr   = var.service_cidr
+    pod_cidr       = var.pod_cidr
+  }
+
+  addon_profile {
+    oms_agent {
+      enabled = true
+    }
+  }
+
+  api_server_authorized_ip_ranges = var.api_server_authorized_ip_ranges
+}
   location                            = coalesce(var.location, data.azurerm_resource_group.main.location)
   name                                = coalesce(var.cluster_name, trim("${var.prefix}-aks", "-"))
   resource_group_name                 = data.azurerm_resource_group.main.name
@@ -597,97 +697,37 @@ resource "azurerm_kubernetes_cluster_node_pool" "node_pool" {
 
     content {
       swap_file_size_mb             = each.value.linux_os_config.swap_file_size_mb
-      transparent_huge_page_defrag  = each.value.linux_os_config.transparent_huge_page_defrag
-      transparent_huge_page_enabled = each.value.linux_os_config.transparent_huge_page_enabled
+      resource "azurerm_kubernetes_cluster" "aks_cluster" {
+        # existing code here
 
-      dynamic "sysctl_config" {
-        for_each = each.value.linux_os_config.sysctl_config == null ? [] : ["sysctl_config"]
-
-        content {
-          fs_aio_max_nr                      = each.value.linux_os_config.sysctl_config.fs_aio_max_nr
-          fs_file_max                        = each.value.linux_os_config.sysctl_config.fs_file_max
-          fs_inotify_max_user_watches        = each.value.linux_os_config.sysctl_config.fs_inotify_max_user_watches
-          fs_nr_open                         = each.value.linux_os_config.sysctl_config.fs_nr_open
-          kernel_threads_max                 = each.value.linux_os_config.sysctl_config.kernel_threads_max
-          net_core_netdev_max_backlog        = each.value.linux_os_config.sysctl_config.net_core_netdev_max_backlog
-          net_core_optmem_max                = each.value.linux_os_config.sysctl_config.net_core_optmem_max
-          net_core_rmem_default              = each.value.linux_os_config.sysctl_config.net_core_rmem_default
-          net_core_rmem_max                  = each.value.linux_os_config.sysctl_config.net_core_rmem_max
-          net_core_somaxconn                 = each.value.linux_os_config.sysctl_config.net_core_somaxconn
-          net_core_wmem_default              = each.value.linux_os_config.sysctl_config.net_core_wmem_default
-          net_core_wmem_max                  = each.value.linux_os_config.sysctl_config.net_core_wmem_max
-          net_ipv4_ip_local_port_range_max   = each.value.linux_os_config.sysctl_config.net_ipv4_ip_local_port_range_max
-          net_ipv4_ip_local_port_range_min   = each.value.linux_os_config.sysctl_config.net_ipv4_ip_local_port_range_min
-          net_ipv4_neigh_default_gc_thresh1  = each.value.linux_os_config.sysctl_config.net_ipv4_neigh_default_gc_thresh1
-          net_ipv4_neigh_default_gc_thresh2  = each.value.linux_os_config.sysctl_config.net_ipv4_neigh_default_gc_thresh2
-          net_ipv4_neigh_default_gc_thresh3  = each.value.linux_os_config.sysctl_config.net_ipv4_neigh_default_gc_thresh3
-          net_ipv4_tcp_fin_timeout           = each.value.linux_os_config.sysctl_config.net_ipv4_tcp_fin_timeout
-          net_ipv4_tcp_keepalive_intvl       = each.value.linux_os_config.sysctl_config.net_ipv4_tcp_keepalive_intvl
-          net_ipv4_tcp_keepalive_probes      = each.value.linux_os_config.sysctl_config.net_ipv4_tcp_keepalive_probes
-          net_ipv4_tcp_keepalive_time        = each.value.linux_os_config.sysctl_config.net_ipv4_tcp_keepalive_time
-          net_ipv4_tcp_max_syn_backlog       = each.value.linux_os_config.sysctl_config.net_ipv4_tcp_max_syn_backlog
-          net_ipv4_tcp_max_tw_buckets        = each.value.linux_os_config.sysctl_config.net_ipv4_tcp_max_tw_buckets
-          net_ipv4_tcp_tw_reuse              = each.value.linux_os_config.sysctl_config.net_ipv4_tcp_tw_reuse
-          net_netfilter_nf_conntrack_buckets = each.value.linux_os_config.sysctl_config.net_netfilter_nf_conntrack_buckets
-          net_netfilter_nf_conntrack_max     = each.value.linux_os_config.sysctl_config.net_netfilter_nf_conntrack_max
-          vm_max_map_count                   = each.value.linux_os_config.sysctl_config.vm_max_map_count
-          vm_swappiness                      = each.value.linux_os_config.sysctl_config.vm_swappiness
-          vm_vfs_cache_pressure              = each.value.linux_os_config.sysctl_config.vm_vfs_cache_pressure
+        role_based_access_control {
+          enabled = true
         }
+
+        network_profile {
+          network_plugin = "azure"
+          dns_service_ip = "10.2.0.10"
+          service_cidr   = "10.2.0.0/24"
+          pod_cidr       = "10.244.0.0/16"
+        }
+
+        default_node_pool {
+          # existing code here
+
+          enable_auto_scaling = true
+          max_pods            = 50
+          min_count           = 1
+          max_count           = 10
+        }
+
+        addon_profile {
+          oms_agent {
+            enabled = true
+          }
+        }
+
+        api_server_authorized_ip_ranges = ["0.0.0.0/0"]
       }
-    }
-  }
-  dynamic "node_network_profile" {
-    for_each = each.value.node_network_profile == null ? [] : ["node_network_profile"]
-
-    content {
-      node_public_ip_tags = each.value.node_network_profile.node_public_ip_tags
-    }
-  }
-  dynamic "upgrade_settings" {
-    for_each = each.value.upgrade_settings == null ? [] : ["upgrade_settings"]
-
-    content {
-      max_surge = each.value.upgrade_settings.max_surge
-    }
-  }
-  dynamic "windows_profile" {
-    for_each = each.value.windows_profile == null ? [] : ["windows_profile"]
-
-    content {
-      outbound_nat_enabled = each.value.windows_profile.outbound_nat_enabled
-    }
-  }
-
-  depends_on = [azapi_update_resource.aks_cluster_post_create]
-
-  lifecycle {
-    create_before_destroy = true
-    ignore_changes = [
-      name
-    ]
-    replace_triggered_by = [
-      null_resource.pool_name_keeper[each.key],
-    ]
-
-    precondition {
-      condition     = var.agents_type == "VirtualMachineScaleSets"
-      error_message = "Multiple Node Pools are only supported when the Kubernetes Cluster is using Virtual Machine Scale Sets."
-    }
-    precondition {
-      condition     = can(regex("[a-z0-9]{1,8}", each.value.name))
-      error_message = "A Node Pools name must consist of alphanumeric characters and have a maximum lenght of 8 characters (4 random chars added)"
-    }
-    precondition {
-      condition     = var.network_plugin_mode != "Overlay" || each.value.os_type != "Windows"
-      error_message = "Windows Server 2019 node pools are not supported for Overlay and Windows support is still in preview"
-    }
-    precondition {
-      condition     = var.network_plugin_mode != "Overlay" || !can(regex("^Standard_DC[0-9]+s?_v2$", each.value.vm_size))
-      error_message = "With with Azure CNI Overlay you can't use DCsv2-series virtual machines in node pools. "
-    }
-  }
-}
 
 resource "null_resource" "pool_name_keeper" {
   for_each = var.node_pools
